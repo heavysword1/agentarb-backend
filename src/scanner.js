@@ -82,7 +82,11 @@ async function scanAndNotify() {
 
   for (const sub of subscribers || []) {
     try {
-      const relevant = arbs.filter(a => a.margin_pct >= (sub.min_arb_pct || 0.5));
+      const maxDays = sub.days_ahead || 30; // default 30 days
+      const relevant = arbs.filter(a => 
+        a.margin_pct >= (sub.min_arb_pct || 0.5) &&
+        (a.days_until === null || a.days_until <= maxDays)
+      );
       if (relevant.length === 0) continue;
 
       let msg = `🎯 *ArbAlert: ${relevant.length} Opportunity${relevant.length > 1 ? 'ies' : ''} Found!*\n\n`;
