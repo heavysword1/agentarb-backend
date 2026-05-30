@@ -34,7 +34,7 @@ app.get('/.well-known/oauth-authorization-server', (req, res) => {
 });
 
 // Free webhook endpoint (no x402)
-app.post('/webhook', webhookRouter);
+app.use('/webhook', webhookRouter);
 
 try {
   const { createFacilitatorConfig } = require('@coinbase/x402');
@@ -160,7 +160,8 @@ setTimeout(async () => {
     const { data } = await axios.post(
       `https://api.telegram.org/bot${process.env.TELEGRAM_ARB_BOT_TOKEN}/setWebhook`,
       {
-        url: 'https://arb.memoryapi.org/webhook'
+        url: 'https://arb.memoryapi.org/webhook',
+      secret_token: process.env.TELEGRAM_WEBHOOK_SECRET
       }
     );
     console.log('📡 Webhook set:', data.description);
