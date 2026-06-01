@@ -1,10 +1,11 @@
 const { createClient } = require('@supabase/supabase-js');
 const axios = require('axios');
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
+if (!process.env.ODDS_API_KEY) require('dotenv').config({ path: '/root/memoryapi-backend/.env' });
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 const BOT_TOKEN = process.env.TELEGRAM_ARB_BOT_TOKEN;
-const ODDS_KEY = process.env.ODDS_API_KEY;
+// ODDS_KEY loaded inside function
 const SPORTS = ['basketball_nba', 'baseball_mlb', 'americanfootball_nfl', 'icehockey_nhl'];
 
 async function sendTelegramMessage(chatId, text) {
@@ -15,7 +16,69 @@ async function sendTelegramMessage(chatId, text) {
   });
 }
 
+
+async function findSportsArbsRundown() {
+  const RAPID_KEY = process.env.RAPIDAPI_THERUNDOWN_KEY;
+  if (!RAPID_KEY) return findSportsArbs(); // fallback
+  
+  const HOST = 'therundown-therundown-v1.p.rapidapi.com';
+  const TODAY = new Date().toISOString().split('T')[0];
+  const SPORTS = [{id:3,name:'MLB'},{id:4,name:'NBA'},{id:6,name:'NHL'},{id:7,name:'MMA'},{id:2,name:'NFL'}];
+  const opportunities = [];
+  
+  for (const sport of SPORTS) {
+    try {
+      const resp = await axios.get(
+        `https://${HOST}/sports/${sport.id}/events/${TODAY}`,
+        { headers: {'x-rapidapi-key':RAPID_KEY,'x-rapidapi-host':HOST,'Content-Type':'application/json'}, timeout:10000 }
+      );
+      const events = resp.data?.events || [];
+      
+      for (const event of events) {
+        const teams = event.teams_normalized || [];
+        const home = teams.find(t=>t.is_home)?.name || 'Home';
+        const away = teams.find(t=>!t.is_home)?.name || 'Away';
+        const lines = event.lines || {};
+        const best = {};
+        
+        for (const [bookId, line] of Object.entries(lines)) {
+          const odds = line.moneyline || {};
+          const h = odds.moneyline_home, a = odds.moneyline_away;
+          if (h && a) {
+            const hDec = h > 0 ? 1+(h/100) : 1-(100/h);
+            const aDec = a > 0 ? 1+(a/100) : 1-(100/a);
+            if (!best.home || hDec > best.home.price) best.home = {book:bookId, price:hDec, team:home};
+            if (!best.away || aDec > best.away.price) best.away = {book:bookId, price:aDec, team:away};
+          }
+        }
+        
+        if (best.home && best.away) {
+          const implied = 1/best.home.price + 1/best.away.price;
+          if (implied < 1.0) {
+            const margin = (1 - implied) * 100;
+            const commenceTime = event.event_date ? new Date(event.event_date) : null;
+            const daysUntil = commenceTime ? Math.ceil((commenceTime - new Date()) / (1000*60*60*24)) : null;
+            opportunities.push({
+              sport: sport.name, 
+              game: `${away} vs ${home}`,
+              game_date: commenceTime?.toISOString().split('T')[0],
+              days_until: daysUntil,
+              margin_pct: Math.round(margin * 100) / 100,
+              bets: [
+                {team: home, book: best.home.book, odds: best.home.price},
+                {team: away, book: best.away.book, odds: best.away.price}
+              ]
+            });
+          }
+        }
+      }
+    } catch(e) { console.error(`[TheRundown] ${sport.name} error:`, e.message); }
+  }
+  return opportunities;
+}
+
 async function findSportsArbs() {
+  const ODDS_KEY = process.env.ODDS_API_KEY;
   const opportunities = [];
   for (const sport of SPORTS) {
     try {
@@ -65,7 +128,7 @@ async function findSportsArbs() {
 
 async function scanAndNotify() {
   console.log('[Scanner] Running arb scan...');
-  const arbs = await findSportsArbs();
+  const arbs = await findSportsArbsRundown();
   if (arbs.length === 0) {
     console.log('[Scanner] No arbs found');
     return;
